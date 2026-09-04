@@ -1,0 +1,6 @@
+{
+  "full30_bestF1": 0.9738058551617874,
+  "deployable13_bestF1": 0.7805372529143436,
+  "lexical9_bestF1": 0.7304761904761905,
+  "f1_gap_full_vs_deployable": 0.1932686022474438
+}

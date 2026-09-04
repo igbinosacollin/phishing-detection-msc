@@ -1,0 +1,4 @@
+Condition,Model,Accuracy,Accuracy_95CI,F1,F1_95CI
+full30,Random Forest,0.9769,"[0.9706, 0.9828]",0.9738,"[0.9662, 0.9806]"
+deployable13,XGBoost,0.8042,"[0.7874, 0.8200]",0.7805,"[0.7595, 0.7994]"
+lexical9,SVM (RBF),0.7440,"[0.7255, 0.7626]",0.7305,"[0.7083, 0.7520]"
