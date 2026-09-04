@@ -1,9 +1,13 @@
 """PROM02 Streamlit application backed by the shared raw-URL model."""
+import os
 import warnings; warnings.filterwarnings("ignore")
 import streamlit as st
 import pandas as pd
 
 from phish_core import score, shap_contributions, find_urls, MODEL_NAME, FEATURES
+
+# Published so visitors know where to forward. Overridable for anyone redeploying.
+FORWARD_ADDRESS = os.environ.get("PHISH_PUBLIC_ADDRESS", "prom02.phishcheck@gmail.com")
 from screenshot_ocr import extract_text as extract_screenshot_text
 
 st.set_page_config(page_title="Phishing URL Detector", page_icon="🎣", layout="centered")
@@ -88,7 +92,19 @@ with tab_url:
 
 # -------------------------------------------------------------- email mode ---
 with tab_email:
-    st.markdown("Paste a forwarded email. Every link in it is extracted and scored "
+    st.markdown("**Two ways to use this mode.**")
+    st.markdown(
+        "**Forward the message.** Send it to the project mailbox below and you will "
+        "receive a reply listing every link with a verdict.")
+    st.code(FORWARD_ADDRESS, language=None)
+    st.caption(
+        "This is a project mailbox for an MSc dissertation, monitored intermittently "
+        "rather than continuously, so a reply may not be immediate. Messages are "
+        "processed to extract their links and are not stored. Forwarding from a spam "
+        "or junk folder often will not work: mail providers commonly strip web links "
+        "from messages they have already classified, so the copy that arrives no longer "
+        "contains them. Forward from your inbox, or forward as an attachment.")
+    st.markdown("**Or paste the text below.** Every link is extracted and scored "
                 "separately, and the message is judged by its worst link.")
     body = st.text_area("Email text", height=200,
                         placeholder="Paste the full message including headers if you have them")
