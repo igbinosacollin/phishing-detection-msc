@@ -17,7 +17,7 @@ Credentials are read from the environment and are never stored in this file:
 
 Use a Google app password on a throwaway account, never your main password.
 Run once:      python email_monitor.py --once
-Run polling:   python email_monitor.py --poll 60
+Run polling:   python email_monitor.py --poll 60   (one login, held open)
 Dry run:       python email_monitor.py --demo    (no network, no mailbox needed)
 """
 from __future__ import annotations
@@ -248,13 +248,20 @@ def send_reply(to_addr: str, subject: str, body: str) -> None:
     log.info("replied to %s", to_addr)
 
 
-def process_unread(send: bool = True) -> int:
+def _connect() -> imaplib.IMAP4_SSL:
+    """Open one authenticated connection."""
     if not (MAILBOX and APP_PW):
         raise RuntimeError("PHISH_MAILBOX and PHISH_APP_PASSWORD must be set")
+    im = imaplib.IMAP4_SSL(IMAP_HOST)
+    im.login(MAILBOX, APP_PW)
+    im.select("INBOX")
+    return im
+
+
+def _handle_unseen(im: imaplib.IMAP4_SSL, send: bool = True) -> int:
+    """Process unread mail on an already-open connection."""
     n = 0
-    with imaplib.IMAP4_SSL(IMAP_HOST) as im:
-        im.login(MAILBOX, APP_PW)
-        im.select("INBOX")
+    if True:
         _typ, data = im.search(None, "UNSEEN")
         for num in data[0].split():
             _typ, raw = im.fetch(num, "(RFC822)")
@@ -277,6 +284,46 @@ def process_unread(send: bool = True) -> int:
             im.store(num, "+FLAGS", "\\Seen")
             n += 1
     return n
+
+
+def process_unread(send: bool = True) -> int:
+    """One-shot check: connect, process, disconnect."""
+    with _connect() as im:
+        return _handle_unseen(im, send)
+
+
+def poll_loop(interval: int, send: bool = True) -> None:
+    """Poll on a single held-open connection.
+
+    The earlier loop called process_unread() every cycle, so it authenticated
+    once per cycle: at a five-second interval that is 720 logins an hour. Mail
+    providers rate-limit and flag authentication attempts rather than idle
+    connections, and two project mailboxes were disabled under that pattern.
+    This logs in once per session and issues a lightweight NOOP each cycle,
+    reconnecting with backoff only when the server drops the connection.
+    """
+    im = None
+    backoff = max(interval, 15)
+    while True:
+        try:
+            if im is None:
+                im = _connect()
+                log.info("connected; one login for this session, polling every %ds", interval)
+                backoff = max(interval, 15)
+            im.noop()
+            _handle_unseen(im, send)
+        except (imaplib.IMAP4.abort, imaplib.IMAP4.error, OSError) as exc:
+            log.warning("connection lost (%s); reconnecting in %ds", exc, backoff)
+            try:
+                if im is not None:
+                    im.logout()
+            except Exception:
+                pass
+            im = None
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 300)
+            continue
+        time.sleep(interval)
 
 
 DEMO = """From: colleague@example.com
@@ -347,9 +394,7 @@ if __name__ == "__main__":
     elif a.once:
         print(f"processed {process_unread(send=not a.no_send)} message(s)")
     elif a.poll:
-        while True:
-            try:
-                process_unread(send=not a.no_send)
-            except Exception as e:
-                log.error("%s", e)
-            time.sleep(a.poll)
+        if a.poll < 30:
+            log.warning("polling every %ds is aggressive; 60 or more is kinder to the "
+                        "provider even on a held connection", a.poll)
+        poll_loop(a.poll, send=not a.no_send)
