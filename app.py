@@ -8,7 +8,11 @@ from phish_core import score, shap_contributions, find_urls, MODEL_NAME, FEATURE
 
 # Published so visitors know where to forward. Overridable for anyone redeploying.
 FORWARD_ADDRESS = os.environ.get("PHISH_PUBLIC_ADDRESS", "promphishingcheck@gmail.com").strip()
-from screenshot_ocr import extract_text as extract_screenshot_text
+try:
+    from screenshot_ocr import extract_text as extract_screenshot_text
+    OCR_READY = True
+except Exception:                      # tesseract or pytesseract absent
+    OCR_READY = False
 
 st.set_page_config(page_title="Phishing URL Detector", page_icon="🎣", layout="centered")
 
@@ -146,8 +150,14 @@ with tab_shot:
                "destination of a hyperlink lives in the message source and cannot be "
                "recovered from a picture, so this mode is weaker than forwarding the "
                "email itself.")
-    img = st.file_uploader("Image", type=["png", "jpg", "jpeg", "webp"])
-    if img is not None:
+    if not OCR_READY:
+        st.info("Text recognition is not available in this deployment. The mode is "
+                "implemented in screenshot_ocr.py and runs locally with Tesseract "
+                "installed; section 3.6 of the dissertation describes it and explains "
+                "why it is the weakest of the three routes.")
+    img = st.file_uploader("Image", type=["png", "jpg", "jpeg", "webp"],
+                           disabled=not OCR_READY)
+    if img is not None and OCR_READY:
         st.image(img, use_container_width=True)
         try:
             text = extract_screenshot_text(img)

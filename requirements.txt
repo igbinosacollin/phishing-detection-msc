@@ -1,8 +1,7 @@
-# Version ranges chosen so the deployment resolves on any recent Python.
-# Upper bounds matter: unbounded requirements let a rebuild pull a major
-# release that had not existed when the app last built, which is what broke
-# the deployment. scikit-learn and xgboost are floored at the versions the
-# saved model was trained with, so the pipeline unpickles cleanly.
+# Bounded ranges: unbounded requirements let a rebuild pull a new major
+# release that did not exist when the app last built, which is what first
+# broke the deployment. scikit-learn and xgboost are floored at versions
+# that can unpickle the saved model.
 streamlit>=1.38,<2
 pandas>=2.0,<3
 numpy>=1.24,<3
@@ -15,4 +14,3 @@ tldextract>=5.0,<6
 python-whois>=0.9,<1
 dnspython>=2.4,<3
 Pillow>=10.0,<13
-pytesseract>=0.3.10,<1
