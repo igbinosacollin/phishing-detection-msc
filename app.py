@@ -7,7 +7,7 @@ import pandas as pd
 from phish_core import score, shap_contributions, find_urls, MODEL_NAME, FEATURES
 
 # Published so visitors know where to forward. Overridable for anyone redeploying.
-FORWARD_ADDRESS = os.environ.get("PHISH_PUBLIC_ADDRESS", "").strip()
+FORWARD_ADDRESS = os.environ.get("PHISH_PUBLIC_ADDRESS", "promphishingcheck@gmail.com").strip()
 from screenshot_ocr import extract_text as extract_screenshot_text
 
 st.set_page_config(page_title="Phishing URL Detector", page_icon="🎣", layout="centered")
