@@ -21,7 +21,7 @@ Run polling:   python email_monitor.py --poll 60
 Dry run:       python email_monitor.py --demo    (no network, no mailbox needed)
 """
 from __future__ import annotations
-import os, sys, time, email, imaplib, smtplib, argparse, logging
+import os, re, sys, time, email, imaplib, smtplib, argparse, logging
 from email.header import decode_header, make_header
 from email.message import EmailMessage
 
@@ -117,7 +117,40 @@ def body_text(msg: email.message.Message, _depth: int = 0) -> str:
             except Exception as exc:
                 log.warning("could not decode a %s part: %s", ctype, exc)
 
-    return "\n".join(p for p in parts if p)
+    text = "\n".join(p for p in parts if p)
+
+    # Spam is frequently malformed on purpose: broken boundaries, wrong charsets,
+    # declared encodings that do not match the payload. When structured parsing
+    # yields nothing usable, fall back to scanning the raw source, which still
+    # contains any href targets even if the MIME tree cannot be walked.
+    if _depth == 0 and len(text.strip()) < 40:
+        try:
+            raw = msg.as_bytes().decode("utf-8", errors="replace")
+        except Exception:
+            raw = str(msg)
+        decoded = _decode_embedded(raw)
+        if decoded:
+            log.info("structured parse returned %d chars; using raw-source fallback",
+                     len(text.strip()))
+            text = text + "\n" + decoded
+    return text
+
+
+def _decode_embedded(raw: str) -> str:
+    """Pull readable text out of a raw message, decoding base64 blocks it contains."""
+    import base64, binascii
+    out = [raw]
+    # long unbroken base64 runs are usually an encoded body part
+    for block in re.findall(r"(?:[A-Za-z0-9+/=]{60,}\s*){2,}", raw):
+        compact = re.sub(r"\s+", "", block)
+        try:
+            dec = base64.b64decode(compact + "=" * (-len(compact) % 4), validate=False)
+            txt = dec.decode("utf-8", errors="replace")
+            if txt.count("\ufffd") < len(txt) * 0.3:
+                out.append(txt)
+        except (binascii.Error, ValueError):
+            continue
+    return "\n".join(out)
 
 
 def describe(msg: email.message.Message) -> str:
@@ -136,6 +169,26 @@ def assess(text: str) -> tuple[list[dict], str]:
     """Score every URL in the text and compose the reply body."""
     urls = find_urls(text)
     if not urls:
+        low = text.lower()
+        if "mailto:" in low and "href" in low:
+            return [], (
+                "No web addresses were found in the message you forwarded.\n\n"
+                "The message does contain links, but they are all mailto: addresses "
+                "rather than web addresses, and this tool only assesses web links.\n\n"
+                "If you forwarded this from a spam or junk folder, that is the likely "
+                "cause. Mail providers commonly strip or disable web links in messages "
+                "they have already classified as spam, so the copy that reaches this "
+                "mailbox no longer contains them. Forwarding from the inbox, or "
+                "forwarding as an attachment, usually preserves the original links.\n")
+        if "href" in low or "<html" in low:
+            return [], (
+                "No web addresses were found in the message you forwarded.\n\n"
+                "The message contains formatting but no web links this tool can read. "
+                "If the message shows a button or an image you would normally click, "
+                "its destination may have been removed by your mail provider, which is "
+                "common for messages already marked as spam. It is also possible the "
+                "content is a single image with the link drawn into the picture, in "
+                "which case there is no text to extract.\n")
         return [], ("No web addresses were found in the message you forwarded, so there "
                     "was nothing to check.\n")
 
@@ -243,33 +296,54 @@ if __name__ == "__main__":
     ap.add_argument("--once", action="store_true", help="process unread mail once")
     ap.add_argument("--poll", type=int, metavar="SECONDS", help="poll continuously")
     ap.add_argument("--demo", action="store_true", help="run on a built-in sample, no mailbox")
+    ap.add_argument("--inspect-n", default="3", metavar="N",
+                    help="how many recent messages to inspect (default 3)")
     ap.add_argument("--inspect", action="store_true",
                     help="print the MIME structure and extracted text of unread mail, send nothing")
     ap.add_argument("--no-send", action="store_true", help="read and print, do not reply")
     a = ap.parse_args()
 
-    if a.demo or not (a.once or a.poll):
+    if a.demo or not (a.once or a.poll or a.inspect):
         _r, reply = assess(DEMO)
         print("=== reply that would be sent ===\n")
         print(reply)
         sys.exit(0)
     if a.inspect:
+        # Structural diagnostics only. No sender, subject or body content is printed,
+        # so the output can be shared without exposing the contents of the mailbox.
         import imaplib as _i
         with _i.IMAP4_SSL(IMAP_HOST) as im:
             im.login(MAILBOX, APP_PW); im.select("INBOX")
             _t, data = im.search(None, "ALL")
-            ids = data[0].split()[-3:]
-            for num in ids:
+            ids = data[0].split()[-int(a.inspect_n):]
+            print(f"inspecting the last {len(ids)} message(s), structure only\n")
+            for k, num in enumerate(ids, 1):
                 _t, raw = im.fetch(num, "(RFC822)")
-                m = email.message_from_bytes(raw[0][1])
-                print("=" * 70)
-                print("from   :", m.get("From"))
-                print("subject:", m.get("Subject"))
-                print("struct :", describe(m))
+                blob = raw[0][1]
+                m = email.message_from_bytes(blob)
                 txt = body_text(m)
-                print("text   :", len(txt), "chars")
-                print("links  :", find_urls(txt))
-                print(txt[:600].replace("\n", " ")[:600])
+                links = find_urls(txt)
+                enc = {p.get("Content-Transfer-Encoding", "none")
+                       for p in ([m] if not m.is_multipart() else m.walk())
+                       if p.get_content_maintype() != "multipart"}
+                print(f"[{k}] raw={len(blob)}b  parts=({describe(m)})")
+                print(f"    encodings={sorted(e for e in enc if e)}")
+                print(f"    extracted_text={len(txt)}chars  links_found={len(links)}")
+                if links:
+                    hosts = sorted({__import__('urllib.parse', fromlist=['x'])
+                                    .urlparse(u if '://' in u else 'http://' + u).hostname or '?'
+                                    for u in links})
+                    print(f"    hostnames={hosts}")
+                else:
+                    low = txt.lower()
+                    print(f"    decoded: href={low.count('href')}  http={low.count('http')}  "
+                          f"src={low.count('src=')}  mailto={low.count('mailto')}")
+                    schemes = sorted(set(re.findall(
+                        r"href=[\"']?([a-zA-Z][a-zA-Z0-9+.-]{0,12}):", txt)))
+                    print(f"    href schemes: {schemes[:8] or 'none (relative links only)'}")
+                    raw_low = blob.lower()
+                    print(f"    raw: href={raw_low.count(b'href')}  http={raw_low.count(b'http')}")
+                print()
     elif a.once:
         print(f"processed {process_unread(send=not a.no_send)} message(s)")
     elif a.poll:

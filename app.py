@@ -13,6 +13,7 @@ try:
     OCR_READY = True
 except Exception:                      # tesseract or pytesseract absent
     OCR_READY = False
+from email_monitor import assess as email_reply     # the forwarding route's own reply
 
 st.set_page_config(page_title="Phishing URL Detector", page_icon="🎣", layout="centered")
 
@@ -113,10 +114,11 @@ with tab_email:
                     "separately, and the message is judged by its worst link.")
     else:
         st.caption(
-            "The forwarding mailbox is not accepting mail at present, so no address is "
-            "shown. The route itself is implemented over IMAP and SMTP and is described "
-            "in section 3.6 of the dissertation; the code is in email_monitor.py in the "
-            "repository. Paste a message below to run the same analysis here.")
+            "The project mailbox is not accepting mail at present, so no address is "
+            "shown. The forwarding route itself is implemented over IMAP and SMTP in "
+            "email_monitor.py and is described in section 3.6 of the dissertation. The "
+            "analysis below is the same code path the mailbox uses, and the reply it "
+            "would have sent can be shown in full underneath the results.")
         st.markdown("**Paste the message text.** Every link is extracted and scored "
                     "separately, and the message is judged by its worst link.")
     body = st.text_area("Email text", height=200,
@@ -141,6 +143,14 @@ with tab_email:
                 {"Link": r["url"][:70], "Risk %": round(r["probability"] * 100, 1),
                  "Verdict": r["verdict"], "Reasons": "; ".join(r["reasons"][:2]) or "none"}
                 for r in results]), hide_index=True, use_container_width=True)
+            with st.expander("The reply the forwarding route would send"):
+                st.caption("Produced by the same function the mailbox monitor calls, so "
+                           "this is the message a sender receives, not a mock-up.")
+                try:
+                    _rows, reply = email_reply(body)
+                    st.code(reply, language=None)
+                except Exception as exc:
+                    st.warning(f"Reply text unavailable: {exc}")
 
 # --------------------------------------------------------- screenshot mode ---
 with tab_shot:
